@@ -8,6 +8,8 @@ import java.net.Socket;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Set;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.ping.thingsjournalclient.dao.UserDao;
 import com.ping.thingsjournalclient.model.MessageType;
@@ -21,16 +23,18 @@ public class ServerConClientTread extends Thread{
 	private User user =null;
 	private Connection con = null;
 	private PrintStream ps = null;
-	
+	public Lock lock;
+
 
 	public ServerConClientTread(Socket socket, User user, Connection con, PrintStream ps){
 		this.socket = socket;
 		this.user = user;
 		this.con = con;
 		this.ps = ps;
+		this.lock = new ReentrantLock();
 	}
-	
-	
+
+
 	public Socket getSocket() {
 		return socket;
 	}
@@ -54,7 +58,7 @@ public class ServerConClientTread extends Thread{
 	@Override
 	public void run() {
 		int tempCount = 0;
-		
+
 		while(true){
 			try{
 				ObjectInputStream ois = new ObjectInputStream(socket.getInputStream());
@@ -68,8 +72,15 @@ public class ServerConClientTread extends Thread{
 					tmSend.setMessageType(MessageType.RET_FRIENDS);
 					tmSend.setMessageContent(friendsNameEncrypt);
 					tmSend.setSender(user.getUserName());
-					ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
-					oos.writeObject(tmSend);
+					try{
+						lock.lock();
+						ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
+						oos.writeObject(tmSend);
+					} catch (IOException e1){
+						e1.printStackTrace();
+					} finally {
+						lock.unlock();
+					}
 					System.out.println("返回好友列表");
 					ps.println("返回好友列表");
 				}else if(type.equals(MessageType.SEND_QUERY)){//处理查询好友位置的请求
@@ -81,8 +92,15 @@ public class ServerConClientTread extends Thread{
 				}else if(type.equals(MessageType.LOCATIONFAILED)){//处理好友定位失败的返回请求
 					TransMessage tmSend = new TransMessage();
 					tmSend.setMessageType(MessageType.LOCATIONFAILED);
-					ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
-					oos.writeObject(tmSend);
+					try{
+						lock.lock();
+						ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
+						oos.writeObject(tmSend);
+					} catch (IOException e1){
+						e1.printStackTrace();
+					} finally {
+						lock.unlock();
+					}
 				}else if(type.equals(MessageType.ON)){//检测好友是否在线
 					tempCount++;
 					if(tempCount%3 == 0){
@@ -96,12 +114,12 @@ public class ServerConClientTread extends Thread{
 			}
 			catch(Exception e){//好友离线，从map中移除该好友，关闭他的socket
 				ManageStatic.move(user.getUserName());
-				
+
 				try {
 					if(socket != null){
-							socket.close();
+						socket.close();
 					}
-					
+
 				} catch (IOException e1) {
 					System.out.println("socket closed failed");
 					ps.println("socket closed failed");
@@ -122,13 +140,13 @@ public class ServerConClientTread extends Thread{
 				break;
 			}
 		}
-		
+
 	}
 	/**
 	 * 处理添加好友的请求
 	 * @param receiver
 	 */
-	
+
 	private void addFriend(String receiver) {
 		TransMessage tm = new TransMessage();
 		try {
@@ -143,8 +161,15 @@ public class ServerConClientTread extends Thread{
 			}else{
 				tm.setMessageType(MessageType.ADDFRIEND_FAIL);
 			}
-			ObjectOutputStream oos = new ObjectOutputStream(getSocket().getOutputStream());
-			oos.writeObject(tm);
+			try{
+				lock.lock();
+				ObjectOutputStream oos = new ObjectOutputStream(getSocket().getOutputStream());
+				oos.writeObject(tm);
+			} catch (IOException e1){
+				e1.printStackTrace();
+			} finally {
+				lock.unlock();
+			}
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -194,16 +219,20 @@ public class ServerConClientTread extends Thread{
 			}
 			tmTranspond.setArea(tm.getArea());
 			try {
+				tempscct.lock.lock();
 				new ObjectOutputStream(tempscct.getSocket().getOutputStream()).writeObject(tmTranspond);
+//				tempscct.lock.unlock();
 				System.out.println("向 "+receiver+" 转发 "+sender+" 查询结果");
 				System.out.println(tmTranspond.getMessageContent());
 				ps.println("向 "+receiver+" 转发 "+sender+" 查询结果");
 				ps.println(tmTranspond.getMessageContent());
 			} catch (IOException e) {
 				e.printStackTrace();
+			} finally {
+				tempscct.lock.unlock();
 			}
 		}
-		
+
 	}
 
 
@@ -211,7 +240,7 @@ public class ServerConClientTread extends Thread{
 	 * 处理查询好友位置的请求
 	 * @param tm
 	 */
-	
+
 	private void dealSendQueary(TransMessage tm) {
 		String[] friendsName = user.getFriendsName().trim().split(User.separator);
 		ArrayList<ServerConClientTread> friendsList = ManageStatic.getOnlineFriendsList(friendsName);
@@ -220,11 +249,15 @@ public class ServerConClientTread extends Thread{
 			tmSender.setSender(user.getUserName());
 			tmSender.setMessageType(MessageType.BACK_QUERY);
 			tmSender.setReceiverCount(friendsList.size());
+			lock.lock();
 			new ObjectOutputStream(getSocket().getOutputStream()).writeObject(tmSender);
+			//			lock.unlock();
 			System.out.println("返回查询请求 "+user.getUserName());
 			ps.println("返回查询请求 "+user.getUserName());
 		} catch (IOException e) {
 			e.printStackTrace();
+		} finally {
+			lock.unlock();
 		}
 		String sendMessage = tm.getMessageContent();
 		String key_Sender = user.getKey_QU();
@@ -240,19 +273,23 @@ public class ServerConClientTread extends Thread{
 			tmReceiver.setMessageContent(transformMessage(sendMessage, key_Sender, key_Receiver));
 			ObjectOutputStream oostemp;
 			try {
+				tempscct.lock.lock();
 				oostemp = new ObjectOutputStream(tempscct.getSocket().getOutputStream());
 				oostemp.writeObject(tmReceiver);
+				//				lock.unlock();
 				System.out.println("向 "+tempscct.getUser().getUserName()+"发送查询请求");
 				ps.println("向 "+tempscct.getUser().getUserName()+"发送查询请求");
 			} catch (IOException e1) {
 				// TODO Auto-generated catch block
 				e1.printStackTrace();
+			} finally {
+				tempscct.lock.unlock();
 			}
-			
+
 		}
-		
+
 	}
-	
+
 	/**
 	 * 将好友返回的查询数据转换成QU端可识别的数据
 	 * @param sendMessage
@@ -274,6 +311,6 @@ public class ServerConClientTread extends Thread{
 		result = temp.substring(0, temp.lastIndexOf(MessageType.symbol2))+MessageType.symbol2+H_Receiver;
 		return result;
 	}
-	
-	
+
+
 }
